@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Predicted Points — FPL 2026/27</title>
+<meta name="description" content="Expected points for every Fantasy Premier League player in 2026/27, rebuilt from underlying per-90 numbers.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="masthead">
+  <div class="wrap masthead-inner">
+    <div>
+      <p class="eyebrow">Fantasy Premier League &middot; 2026/27</p>
+      <h1>Predicted points</h1>
+      <p class="standfirst">
+        Every player's score rebuilt from their underlying per-90 numbers,
+        then scaled by expected minutes and the fixtures ahead.
+      </p>
+    </div>
+    <dl class="ticker" id="ticker">
+      <div><dt>Players</dt><dd id="stat-players">—</dd></div>
+      <div><dt>Projecting</dt><dd id="stat-horizon">—</dd></div>
+      <div><dt>Data</dt><dd id="stat-updated">—</dd></div>
+    </dl>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <section class="controls" aria-label="Projection settings">
+    <div class="control-row">
+      <div class="field field-search">
+        <label for="search">Search</label>
+        <input type="search" id="search" placeholder="Player or club" autocomplete="off">
+      </div>
+
+      <div class="field">
+        <label for="horizon">Gameweeks ahead</label>
+        <select id="horizon">
+          <option value="1">Next 1</option>
+          <option value="3">Next 3</option>
+          <option value="6" selected>Next 6</option>
+          <option value="12">Next 12</option>
+          <option value="38">Full season</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="minutes">Minutes assumption</label>
+        <select id="minutes">
+          <option value="last" selected>Last season's minutes</option>
+          <option value="blend">Halfway to nailed</option>
+          <option value="starter">Everyone plays 90</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="maxprice">Max price</label>
+        <select id="maxprice">
+          <option value="150" selected>Any</option>
+          <option value="45">£4.5m</option>
+          <option value="55">£5.5m</option>
+          <option value="65">£6.5m</option>
+          <option value="80">£8.0m</option>
+          <option value="100">£10.0m</option>
+        </select>
+      </div>
+
+      <div class="field field-check">
+        <label class="checkbox">
+          <input type="checkbox" id="hide-unavailable">
+          <span>Hide injured and suspended</span>
+        </label>
+      </div>
+    </div>
+
+    <div class="control-row control-row-tabs">
+      <div class="tabs" role="tablist" aria-label="Position">
+        <button role="tab" class="tab is-active" data-pos="all">All</button>
+        <button role="tab" class="tab" data-pos="1">GKP</button>
+        <button role="tab" class="tab" data-pos="2">DEF</button>
+        <button role="tab" class="tab" data-pos="3">MID</button>
+        <button role="tab" class="tab" data-pos="4">FWD</button>
+      </div>
+      <div class="tabs" role="tablist" aria-label="Rank by">
+        <button role="tab" class="tab is-active" data-sort="horizonPoints">Points</button>
+        <button role="tab" class="tab" data-sort="valuePerMillion">Points per £m</button>
+        <button role="tab" class="tab" data-sort="xp90">Per 90</button>
+      </div>
+    </div>
+  </section>
+
+  <p class="banner" id="seed-banner" hidden></p>
+
+  <section class="table-shell">
+    <table id="board">
+      <thead>
+        <tr>
+          <th class="col-rank" scope="col">#</th>
+          <th class="col-player" scope="col">Player</th>
+          <th class="col-pos" scope="col">Pos</th>
+          <th class="col-num" scope="col">Price</th>
+          <th class="col-num" scope="col">Per 90</th>
+          <th class="col-num" scope="col">Mins</th>
+          <th class="col-fix" scope="col">Fixtures</th>
+          <th class="col-xp" scope="col">Predicted</th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <p class="empty" id="empty" hidden>No players match those filters. Widen the price cap or clear the search.</p>
+  </section>
+
+  <button class="more" id="more" hidden>Show more</button>
+
+  <section class="method">
+    <h2>How the number is built</h2>
+    <p>
+      Each player's per-90 expected score is assembled from the 2026/27 scoring rules
+      rather than from last season's points total. Goals come from expected goals,
+      assists from expected assists, clean sheets from a Poisson draw on expected goals
+      conceded, and defensive contribution from the chance of clearing the 10 or 12 action
+      threshold. Bonus and cards use last season's observed rate.
+    </p>
+    <p>
+      That per-90 figure is then multiplied by expected minutes, discounted for injury or
+      suspension, and pushed up or down by team strength and the difficulty of the fixtures
+      in the window you've chosen. Click any row to see the decomposition.
+    </p>
+    <p class="caveat">
+      Players with no Premier League minutes at all have nothing to decompose. They are marked
+      <span class="pill pill-est">est</span> and given the median for their position and
+      cost bracket, which is a guess rather than a projection.
+    </p>
+  </section>
+</main>
+
+<footer class="wrap foot">
+  <p>Built with the public Fantasy Premier League API. Not affiliated with the Premier League.</p>
+</footer>
+
+<script src="model.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
