@@ -1,0 +1,337 @@
+/* ---------------------------------------------------------------
+   app.js — loads the data, runs the model, draws the board.
+   --------------------------------------------------------------- */
+
+const state = {
+  dataset: null,
+  rows: [],
+  position: "all",
+  sort: "horizonPoints",
+  search: "",
+  horizon: 6,
+  minutesMode: "last",
+  maxPrice: 150,
+  hideUnavailable: false,
+  limit: 60,
+  openId: null
+};
+
+const el = (id) => document.getElementById(id);
+
+const PART_META = [
+  ["goals", "Goals", "--part-goals"],
+  ["assists", "Assists", "--part-assists"],
+  ["cleanSheet", "Clean sheets", "--part-cs"],
+  ["defcon", "Defensive contribution", "--part-defcon"],
+  ["bonus", "Bonus", "--part-bonus"],
+  ["saves", "Saves", "--part-cs"],
+  ["appearance", "Appearance", "--part-base"]
+];
+
+/* ---------- loading ---------- */
+
+async function loadJSON(path) {
+  const res = await fetch(path, { cache: "no-store" });
+  if (!res.ok) throw new Error(`${path} returned ${res.status}`);
+  return res.json();
+}
+
+async function boot() {
+  try {
+    const [playersFile, teamsFile, fixturesFile] = await Promise.all([
+      loadJSON("data/players.json"),
+      loadJSON("data/teams.json"),
+      loadJSON("data/fixtures.json")
+    ]);
+
+    state.dataset = {
+      players: playersFile.players,
+      teams: teamsFile.teams,
+      fixtures: fixturesFile,
+      generated: playersFile.generated
+    };
+
+    if (playersFile.generated === "seed") {
+      const banner = el("seed-banner");
+      banner.innerHTML =
+        "This is the starter dataset — only two clubs are in it. Run " +
+        "<code>python scripts/fetch_fpl_data.py</code>, or push to GitHub and let the " +
+        "included Action run to pull all 20 squads from the FPL API.";
+      banner.hidden = false;
+    }
+
+    el("stat-updated").textContent =
+      playersFile.generated === "seed" ? "Seed" : formatStamp(playersFile.generated);
+
+    wireControls();
+    recompute();
+  } catch (err) {
+    el("empty").hidden = false;
+    el("empty").textContent =
+      "Couldn't load the data files. If you're opening index.html directly, " +
+      "browsers block local fetch — serve the folder instead (python -m http.server).";
+    console.error(err);
+  }
+}
+
+function formatStamp(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return "—";
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+}
+
+/* ---------- controls ---------- */
+
+function wireControls() {
+  el("search").addEventListener("input", (e) => {
+    state.search = e.target.value.trim().toLowerCase();
+    state.limit = 60;
+    render();
+  });
+
+  el("horizon").addEventListener("change", (e) => {
+    state.horizon = Number(e.target.value);
+    recompute();
+  });
+
+  el("minutes").addEventListener("change", (e) => {
+    state.minutesMode = e.target.value;
+    recompute();
+  });
+
+  el("maxprice").addEventListener("change", (e) => {
+    state.maxPrice = Number(e.target.value);
+    state.limit = 60;
+    render();
+  });
+
+  el("hide-unavailable").addEventListener("change", (e) => {
+    state.hideUnavailable = e.target.checked;
+    state.limit = 60;
+    render();
+  });
+
+  document.querySelectorAll("[data-pos]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll("[data-pos]").forEach((b) => b.classList.remove("is-active"));
+      btn.classList.add("is-active");
+      state.position = btn.dataset.pos;
+      state.limit = 60;
+      render();
+    });
+  });
+
+  document.querySelectorAll("[data-sort]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll("[data-sort]").forEach((b) => b.classList.remove("is-active"));
+      btn.classList.add("is-active");
+      state.sort = btn.dataset.sort;
+      state.limit = 60;
+      render();
+    });
+  });
+
+  el("more").addEventListener("click", () => {
+    state.limit += 60;
+    render();
+  });
+}
+
+/* ---------- model run ---------- */
+
+function recompute() {
+  state.rows = window.FPLModel.project(state.dataset, {
+    horizon: state.horizon,
+    minutesMode: state.minutesMode,
+    fixtureWeight: 1
+  });
+  el("stat-players").textContent = state.rows.length;
+  el("stat-horizon").textContent =
+    state.horizon === 38 ? "38 GWs" : `GW${state.dataset.fixtures.next_gw ?? 1}–${(state.dataset.fixtures.next_gw ?? 1) + state.horizon - 1}`;
+  render();
+}
+
+/* ---------- filtering and rendering ---------- */
+
+function visibleRows() {
+  return state.rows
+    .filter((r) => {
+      if (state.position !== "all" && String(r.positionId) !== state.position) return false;
+      if (r.price * 10 > state.maxPrice) return false;
+      if (state.hideUnavailable && r.availability < 0.75) return false;
+      if (state.search) {
+        const hay = `${r.name} ${r.fullName} ${r.team.name} ${r.team.short}`.toLowerCase();
+        if (!hay.includes(state.search)) return false;
+      }
+      return true;
+    })
+    .sort((a, b) => b[state.sort] - a[state.sort]);
+}
+
+function render() {
+  const rows = visibleRows();
+  const tbody = el("rows");
+  tbody.innerHTML = "";
+
+  el("empty").hidden = rows.length > 0;
+
+  const slice = rows.slice(0, state.limit);
+  slice.forEach((r, i) => {
+    tbody.appendChild(buildRow(r, i + 1));
+    if (state.openId === r.id) tbody.appendChild(buildDetail(r));
+  });
+
+  const more = el("more");
+  more.hidden = rows.length <= state.limit;
+  more.textContent = `Show more (${rows.length - state.limit} left)`;
+}
+
+function statusPill(r) {
+  if (r.availability === 0) return '<span class="pill pill-out">out</span>';
+  if (r.availability < 1) return `<span class="pill pill-doubt">${Math.round(r.availability * 100)}%</span>`;
+  return "";
+}
+
+function buildRow(r, rank) {
+  const tr = document.createElement("tr");
+  tr.className = "player-row" + (state.openId === r.id ? " is-open" : "");
+  tr.tabIndex = 0;
+  tr.setAttribute("role", "button");
+  tr.setAttribute("aria-expanded", state.openId === r.id ? "true" : "false");
+
+  const pens = r.penaltyOrder === 1 ? '<span class="pill pill-pen">pens</span>' : "";
+  const est = r.estimated ? '<span class="pill pill-est">est</span>' : "";
+
+  tr.innerHTML = `
+    <td class="rank">${rank}</td>
+    <td>
+      <div class="name">${escapeHTML(r.name)}${pens}${est}${statusPill(r)}</div>
+      <div class="club">${r.team.short}</div>
+    </td>
+    <td><span class="pos-tag">${r.position}</span></td>
+    <td class="num">£${r.price.toFixed(1)}m</td>
+    <td class="num">${r.xp90.toFixed(2)}</td>
+    <td class="num">${Math.round(r.minutesPerMatch)}'</td>
+    <td>${fixtureStrip(r)}</td>
+    <td class="xp">${r.horizonPoints.toFixed(1)}</td>
+  `;
+
+  const toggle = () => {
+    state.openId = state.openId === r.id ? null : r.id;
+    render();
+  };
+  tr.addEventListener("click", toggle);
+  tr.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      toggle();
+    }
+  });
+
+  return tr;
+}
+
+function fixtureStrip(r) {
+  if (!r.hasFixtures) {
+    return '<div class="fix-strip"><span class="fix fix-none">no data</span></div>';
+  }
+  const chips = r.fixtures
+    .slice(0, 5)
+    .map((f) => {
+      const label = f.home ? f.opp.toUpperCase() : f.opp.toLowerCase();
+      return `<span class="fix fix-${f.diff}" title="GW${f.gw} ${f.home ? "home" : "away"}">${label}</span>`;
+    })
+    .join("");
+  return `<div class="fix-strip">${chips}</div>`;
+}
+
+function buildDetail(r) {
+  const tr = document.createElement("tr");
+  tr.className = "detail";
+  const td = document.createElement("td");
+  td.colSpan = 8;
+
+  const facts = [
+    ["Predicted per match", r.perMatch.toFixed(2)],
+    ["Predicted over 38 GWs", r.seasonPoints.toFixed(0)],
+    ["Points per £m", r.valuePerMillion.toFixed(2)],
+    ["Average fixture difficulty", r.avgDifficulty.toFixed(1)],
+    ["Last season's points", r.lastSeasonPoints],
+    ["Selected by", `${r.selectedBy}%`]
+  ];
+
+  let left;
+  if (!r.breakdown) {
+    left = `<h3>Points breakdown</h3>
+      <p class="caveat">No Premier League minutes on record, so there's nothing to decompose.
+      The projection comes from the median for a ${r.position} at £${r.price.toFixed(1)}m.</p>`;
+  } else {
+    const parts = PART_META.map(([key, label, varName]) => ({
+      label,
+      varName,
+      value: r.breakdown.parts[key] || 0
+    })).filter((p) => p.value > 0.005);
+
+    const positiveTotal = parts.reduce((s, p) => s + p.value, 0);
+
+    const bar = parts
+      .map(
+        (p) =>
+          `<span style="width:${((p.value / positiveTotal) * 100).toFixed(2)}%;background:var(${p.varName})" title="${p.label}"></span>`
+      )
+      .join("");
+
+    const legend = parts
+      .map(
+        (p) =>
+          `<li><span class="swatch" style="background:var(${p.varName})"></span>${p.label}<b>${p.value.toFixed(2)}</b></li>`
+      )
+      .join("");
+
+    const penalties = [];
+    if (r.breakdown.parts.conceded < -0.005)
+      penalties.push(`<li><span class="swatch" style="background:var(--bad)"></span>Goals conceded<b>${r.breakdown.parts.conceded.toFixed(2)}</b></li>`);
+    if (r.breakdown.parts.cards < -0.005)
+      penalties.push(`<li><span class="swatch" style="background:var(--bad)"></span>Cards<b>${r.breakdown.parts.cards.toFixed(2)}</b></li>`);
+
+    left = `
+      <h3>Where the ${r.xp90.toFixed(2)} per 90 comes from</h3>
+      <div class="stack">${bar}</div>
+      <ul class="legend">${legend}${penalties.join("")}</ul>`;
+  }
+
+  const extraFacts = r.breakdown
+    ? [
+        ["Clean sheet chance", `${Math.round(r.breakdown.csProbability * 100)}%`],
+        ["Defensive threshold chance", `${Math.round(r.breakdown.defconProbability * 100)}%`]
+      ]
+    : [];
+
+  const factList = [...facts, ...extraFacts]
+    .map(([k, v]) => `<li>${k}<b>${v}</b></li>`)
+    .join("");
+
+  const news = r.news
+    ? `<p class="news-line">${escapeHTML(r.news)}</p>`
+    : "";
+
+  td.innerHTML = `
+    <div class="detail-inner">
+      <div>${left}${news}</div>
+      <div>
+        <h3>${escapeHTML(r.fullName)} · ${r.team.name}</h3>
+        <ul class="facts">${factList}</ul>
+      </div>
+    </div>`;
+
+  tr.appendChild(td);
+  return tr;
+}
+
+function escapeHTML(str) {
+  return String(str).replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
+  );
+}
+
+boot();
